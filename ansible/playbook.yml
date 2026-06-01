@@ -1,0 +1,121 @@
+---
+- name: Provisionar ambiente Projeto Korp (Partes 1, 2 e 3)
+  hosts: projeto_korp
+  become: true
+  vars:
+    project_root: "{{ playbook_dir }}/.."
+    docker_network_name: projeto-korp-net
+    compose_project_name: desafio-devops-2026
+
+  tasks:
+    - name: Instalar dependências para repositório Docker (Debian/Ubuntu)
+      ansible.builtin.apt:
+        name:
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+          - python3-pip
+        state: present
+        update_cache: true
+      when: ansible_os_family == "Debian"
+
+    - name: Adicionar chave GPG oficial do Docker
+      ansible.builtin.apt_key:
+        url: https://download.docker.com/linux/{{ ansible_distribution | lower }}/gpg
+        state: present
+      when: ansible_os_family == "Debian"
+
+    - name: Adicionar repositório Docker
+      ansible.builtin.apt_repository:
+        repo: >-
+          deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') | replace('aarch64', 'arm64') }}]
+          https://download.docker.com/linux/{{ ansible_distribution | lower }}
+          {{ ansible_distribution_release }} stable
+        state: present
+        filename: docker
+      when: ansible_os_family == "Debian"
+
+    - name: Instalar Docker Engine e Docker Compose plugin
+      ansible.builtin.apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+        state: present
+        update_cache: true
+      when: ansible_os_family == "Debian"
+
+    - name: Garantir serviço Docker em execução
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: true
+
+    - name: Adicionar usuário atual ao grupo docker
+      ansible.builtin.user:
+        name: "{{ ansible_user_id }}"
+        groups: docker
+        append: true
+      when: ansible_user_id is defined
+
+    - name: Instalar coleção community.docker (se necessário)
+      ansible.builtin.command:
+        cmd: ansible-galaxy collection install -r requirements.yml
+        chdir: "{{ playbook_dir }}"
+      become: false
+      changed_when: false
+      delegate_to: localhost
+      run_once: true
+
+    - name: Parar stack anterior (se existir)
+      ansible.builtin.command:
+        cmd: docker compose -f docker-compose.yml -p {{ compose_project_name }} down
+        chdir: "{{ project_root }}"
+      changed_when: false
+      failed_when: false
+
+    - name: Criar rede Docker bridge projeto-korp-net
+      community.docker.docker_network:
+        name: "{{ docker_network_name }}"
+        driver: bridge
+        state: present
+
+    - name: Build da imagem http-server-projeto-korp
+      community.docker.docker_image:
+        name: http-server-projeto-korp:latest
+        build:
+          path: "{{ project_root }}/http-server-projeto-korp"
+        source: build
+        force_source: true
+
+    - name: Subir ambiente com Docker Compose
+      ansible.builtin.command:
+        cmd: docker compose -f docker-compose.yml -p {{ compose_project_name }} up -d --build
+        chdir: "{{ project_root }}"
+      register: compose_up
+
+    - name: Aguardar NGINX responder na porta 80
+      ansible.builtin.uri:
+        url: http://127.0.0.1:80/projeto-korp
+        method: GET
+        status_code: 200
+        return_content: true
+      register: health_check
+      retries: 15
+      delay: 3
+      until: health_check.status == 200
+
+    - name: Exibir resposta do serviço no console
+      ansible.builtin.debug:
+        msg: "Resposta de http://localhost:80/projeto-korp -> {{ health_check.json }}"
+
+    - name: Resumo dos endpoints
+      ansible.builtin.debug:
+        msg:
+          - "API via proxy: http://localhost:80/projeto-korp"
+          - "Prometheus: http://localhost:9090"
+          - "Grafana: http://localhost:3000 (admin/admin)"
+          - "Dashboard: http-server-projeto-korp (provisionado automaticamente)"
