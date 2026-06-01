@@ -94,4 +94,4 @@ O playbook:
 
 ## Entrega
 
-Repositório público no GitHub e envio para **rh@korp.com.br** conforme o edital do desafio.
+Repositório público no GitHub.
