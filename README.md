@@ -94,4 +94,3 @@ O playbook:
 
 ## Entrega
 
-Repositório público no GitHub.
